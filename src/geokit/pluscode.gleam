@@ -36,6 +36,7 @@ import gleam/bool
 import gleam/float
 import gleam/int
 import gleam/list
+import gleam/result
 import gleam/string
 
 /// Errors returned by [`encode`](#encode), [`decode`](#decode),
@@ -126,13 +127,18 @@ pub fn encode(
     )
     |> list.fold("", string.append)
 
-  let assert Ok(lat_mod) = float.modulo(lat +. 90.0, by: 1.0)
-  let assert Ok(lng_mod) = float.modulo(lng +. 180.0, by: 1.0)
-
   let small_digits =
     encode_small_digits(
-      lat: lat_mod *. 2.5e7,
-      lng: lng_mod *. 8.192e6,
+      lat: lat +. 90.0
+        |> float.modulo(by: 1.0)
+        |> result.map(fn(x) { x *. 2.5e7 })
+        |> result.unwrap(0.0)
+        |> float.truncate,
+      lng: lng +. 180.0
+        |> float.modulo(by: 1.0)
+        |> result.map(fn(x) { x *. 8.192e6 })
+        |> result.unwrap(0.0)
+        |> float.truncate,
       step: length - 10,
       acc: [],
     )
@@ -147,8 +153,10 @@ pub fn encode(
     }
     <> plus
     <> {
-      big_digits
-      |> string.slice(at_index: 7, length: 2)
+      case length {
+        x if x <= 8 -> ""
+        _ -> string.drop_start(big_digits, up_to: 8)
+      }
     }
     <> { small_digits }
 
@@ -293,30 +301,27 @@ fn encode_big_digits(
 
 /// Encode digits 11-15, 1 at a time.
 fn encode_small_digits(
-  lat lat: Float,
-  lng lng: Float,
+  lat lat: Int,
+  lng lng: Int,
   step step: Int,
   acc acc: List(String),
 ) -> List(String) {
   case step <= 0 {
     True -> acc
     False -> {
-      let assert Ok(mod_lat) = float.modulo(lat, by: 5.0)
-      let assert Ok(mod_lng) = float.modulo(lng, by: 4.0)
+      let assert Ok(mod_lat) = int.modulo(lat, by: 5)
+      let assert Ok(mod_lng) = int.modulo(lng, by: 4)
 
       let char =
         mod_lat
-        |> float.truncate
         |> fn(x) { x * 4 }
-        |> fn(x) { x + float.truncate(mod_lng) }
+        |> fn(x) { x + mod_lng }
         |> string.slice(base20_digits, _, 1)
 
-      encode_small_digits(
-        lat: lat /. 5.0,
-        lng: lng /. 4.0,
-        step: step - 1,
-        acc: [char, ..acc],
-      )
+      encode_small_digits(lat: lat / 5, lng: lng / 4, step: step - 1, acc: [
+        char,
+        ..acc
+      ])
     }
   }
 }
