@@ -114,46 +114,43 @@ pub fn encode(
   let lat = latlng.lat(point)
   let lng = latlng.lng(point)
 
-  let most_significant_digits =
-    encode_most_significant_digits(
+  let big_digits =
+    encode_big_digits(
       lat: { lat +. 90.0 } *. 8000.0
         |> float.truncate,
       lng: { lng +. 180.0 } *. 8000.0
         |> float.truncate,
-      step: int.clamp(length, min: 2, max: 10) / 2,
-      // test
+      // you must do all 5 even if they're sliced off later.
+      step: 5,
       acc: [],
     )
+    |> list.fold("", string.append)
 
-  let assert Ok(lat_mod) = float.modulo(lat, by: 1.0)
-  let assert Ok(lng_mod) = float.modulo(lng, by: 1.0)
+  let assert Ok(lat_mod) = float.modulo(lat +. 90.0, by: 1.0)
+  let assert Ok(lng_mod) = float.modulo(lng +. 180.0, by: 1.0)
 
-  let less_significant_digits =
-    encode_less_significant_digits(
+  let small_digits =
+    encode_small_digits(
       lat: lat_mod *. 2.5e7,
       lng: lng_mod *. 8.192e6,
       step: length - 10,
       acc: [],
     )
+    |> list.fold("", string.append)
 
   // assemble the characters
   let plus_code =
     {
-      most_significant_digits
-      |> list.fold_right("", string.append)
-      |> string.slice(at_index: 0, length: 8)
+      big_digits
+      |> string.slice(at_index: 0, length: int.clamp(length, min: 2, max: 8))
       |> string.pad_end(to: 8, with: padding_char)
     }
     <> plus
     <> {
-      most_significant_digits
-      |> list.drop(8)
-      |> list.fold_right("", string.append)
+      big_digits
+      |> string.slice(at_index: 7, length: 2)
     }
-    <> {
-      less_significant_digits
-      |> list.fold_right("", string.append)
-    }
+    <> { small_digits }
 
   Ok(plus_code)
 }
@@ -270,7 +267,7 @@ fn global_encoding_digit_length_is_valid(len: Int) -> Bool {
 }
 
 /// Encode digits 1-10 in 2 digit chunks.
-fn encode_most_significant_digits(
+fn encode_big_digits(
   lat lat: Int,
   lng lng: Int,
   step step: Int,
@@ -285,18 +282,17 @@ fn encode_most_significant_digits(
       let lat_char = string.slice(base20_digits, lat_mod, 1)
       let lng_char = string.slice(base20_digits, lng_mod, 1)
 
-      encode_most_significant_digits(
-        lat: lat / 20,
-        lng: lng / 20,
-        step: step - 1,
-        acc: [lng_char, lat_char, ..acc],
-      )
+      encode_big_digits(lat: lat / 20, lng: lng / 20, step: step - 1, acc: [
+        lat_char,
+        lng_char,
+        ..acc
+      ])
     }
   }
 }
 
 /// Encode digits 11-15, 1 at a time.
-fn encode_less_significant_digits(
+fn encode_small_digits(
   lat lat: Float,
   lng lng: Float,
   step step: Int,
@@ -315,7 +311,7 @@ fn encode_less_significant_digits(
         |> fn(x) { x + float.truncate(mod_lng) }
         |> string.slice(base20_digits, _, 1)
 
-      encode_less_significant_digits(
+      encode_small_digits(
         lat: lat /. 5.0,
         lng: lng /. 4.0,
         step: step - 1,
