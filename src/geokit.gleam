@@ -14,6 +14,8 @@
 ////   Polyline algorithm.
 //// - [`geokit/mercator`](./geokit/mercator.html) — Web Mercator tile
 ////   and quadkey conversion.
+//// - [`geokit/pluscode`](./geokit/pluscode.html) — Google Open
+//// Location Code encoding / decoding.
 //// - [`geokit/geometry`](./geokit/geometry.html) — `Geometry` ADT
 ////   (`Point` / `LineString` / `Polygon`) shared by `bbox`,
 ////   `centroid`, and `simplify`.
