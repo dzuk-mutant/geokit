@@ -30,6 +30,7 @@ pub fn test_encode(
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ------------- GOOGLE EXAMPLES - SET 1 --------------
+// https://github.com/google/open-location-code/blob/main/test_data/encoding.csv
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
@@ -141,7 +142,7 @@ pub fn encode_asheville_pinball_museum_test() -> Nil {
   )
 }
 
-pub fn encode_hachiko_statue_shibuya_tokyo() -> Nil {
+pub fn encode_hachiko_statue_shibuya_tokyo_test() -> Nil {
   test_encode(
     lat: 35.659056,
     lng: 139.700636,
@@ -150,7 +151,7 @@ pub fn encode_hachiko_statue_shibuya_tokyo() -> Nil {
   )
 }
 
-pub fn encode_place_de_la_republique_rennes() -> Nil {
+pub fn encode_place_de_la_republique_rennes_test() -> Nil {
   test_encode(
     lat: 48.109846,
     lng: -1.679001,

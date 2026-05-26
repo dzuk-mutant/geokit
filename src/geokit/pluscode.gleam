@@ -116,13 +116,9 @@ pub fn encode(
 
   let most_significant_digits =
     encode_most_significant_digits(
-      lat: lat
-        |> fn(x) { x +. 90.0 }
-        |> fn(x) { x *. 8000.0 }
+      lat: { lat +. 90.0 } *. 8000.0
         |> float.truncate,
-      lng: lng
-        |> fn(x) { x +. 180.0 }
-        |> fn(x) { x *. 8000.0 }
+      lng: { lng +. 180.0 } *. 8000.0
         |> float.truncate,
       step: int.clamp(length, min: 2, max: 10) / 2,
       // test
