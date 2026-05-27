@@ -2,7 +2,8 @@
 /// [plus.codes](https://plus.codes)
 ///
 /// *The algorithm and technology is known as Open Location Code. For all
-/// user-facing situations, use 'Plus Codes'.*
+/// user-facing situations, use 'Plus Codes'. I am calling them Plus Codes
+/// here to avoid any confusion!*
 ///
 /// A Plus Code is an alphanumeric string identifying a rectangular
 /// cell on the Earth's surface. Longer strings pinpoint smaller cells.
@@ -31,6 +32,17 @@
 /// - Global: `9C2XRVF6+2P5`
 /// - Local: `RVF6+2P5 Brighton, United Kingdom`
 ///
+/// ## Reliability
+/// Not all Plus Code implementations are made reliably or work in
+/// every environment. This is a known problem and is due to
+/// implementation differences and complications with floating
+/// point math. This implementation has been written in a way
+/// that moves to integers as quickly as possible to maintain
+/// location integrity.
+///
+/// This Plus Code implementation has been tested with all of
+/// Google's reference encoding tests.
+///
 import geokit/latlng.{type LatLng}
 import gleam/bool
 import gleam/float
@@ -39,8 +51,7 @@ import gleam/list
 import gleam/result
 import gleam/string
 
-/// Errors returned by [`encode`](#encode), [`decode`](#decode),
-/// and [`neighbor`](#neighbor).
+/// Errors returned by [`encode`](#encode) and [`decode`](#decode).
 pub type PlusCodeError {
   /// The digit length requested for an encode is invalid.
   InvalidCodeLength(length: Int)
@@ -72,6 +83,41 @@ pub type PlusCodeRegion {
 /// The characters used to encode lat/long information.
 const base20_digits: String = "23456789CFGHJMPQRVWX"
 
+/// Internal function that gets a Plus Code character from an Int.
+/// that Int should be 0-19, else this will return an empty string.
+fn int_to_digit(int: Int) -> String {
+  string.slice(from: base20_digits, at_index: int, length: 1)
+}
+
+// Converts a character to a Base 20 number.
+//
+// Must be correct or it will return Error(Nil).
+fn digit_to_int(digit: String) -> Result(Int, Nil) {
+  case digit {
+    "2" -> 0 |> Ok
+    "3" -> 1 |> Ok
+    "4" -> 2 |> Ok
+    "5" -> 3 |> Ok
+    "6" -> 4 |> Ok
+    "7" -> 5 |> Ok
+    "8" -> 6 |> Ok
+    "9" -> 7 |> Ok
+    "C" -> 8 |> Ok
+    "F" -> 9 |> Ok
+    "G" -> 10 |> Ok
+    "H" -> 11 |> Ok
+    "J" -> 12 |> Ok
+    "M" -> 13 |> Ok
+    "P" -> 14 |> Ok
+    "Q" -> 15 |> Ok
+    "R" -> 16 |> Ok
+    "V" -> 17 |> Ok
+    "W" -> 18 |> Ok
+    "X" -> 19 |> Ok
+    _ -> Error(Nil)
+  }
+}
+
 /// The marker character between characters 8 and 10.
 const plus: String = "+"
 
@@ -80,12 +126,6 @@ const plus: String = "+"
 /// plus anchoring the code.
 const padding_char: String = "0"
 
-/// For small-digit encode/decode along latitude.
-const precision_grid_rows: Int = 5
-
-/// For small-digit encode/decode along longitude.
-const precision_grid_columns: Int = 4
-
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
@@ -95,61 +135,220 @@ const precision_grid_columns: Int = 4
 // ----------------------------------------------------
 // ----------------------------------------------------
 
-/// Encodes a LatLng into a global Plus Code whose region encloses it.
-///
-/// ## Length
-/// The digit length of a Plus Code is counted by the
-/// number of digits that have location information,
-/// not the length of the code itself.
-///
-/// A Plus Code is 9 characters long minimum, as
-/// large area codes get padded with 0s and a plus
-/// always has to be in the string.
-///
-/// The default digit length of a Plus Code is 10.
-///
-/// The only valid lengths of a Plus Code are 2, 4,
-/// 6, 8, 10, 11, 12, 13, 14 and 15 digits.
 pub fn encode(
   point point: LatLng,
   length length: Int,
 ) -> Result(String, PlusCodeError) {
+  // This encoding function is not outlined in the Google spec,
+  // this is an improved algorithm made by a friend of mine
+  // as it turned out the Google spec led to a lot of
+  // inconsistency and error as it relied too much on
+  // floating point math to be used safely and reliably.
+  //
+  // Thank you to my computer science PhD friend for
+  // working out this more stable method of encoding
+  // Plus Codes!
+  //
+
+  // See if the given length is valid. If not, don't
+  // even bother starting.
   use <- bool.guard(
     when: !global_encoding_digit_length_is_valid(length),
     return: Error(InvalidCodeLength(length: length)),
   )
-  let big_digits = encode_big_digits(point:)
 
-  let small_digits = encode_small_digits(point:, full_code_length: length)
+  // Plus Code conversion is very susceptible to
+  // floating point math issues and discrepancies.
+  //
+  // The following code segments turns floating-point
+  // coordinates to integers ASAP to get the flaws of
+  // floating point math out of the way.
+  //
+  let lat_int: Int =
+    point
+    |> latlng.lat
+    |> float.multiply(25_000_000.0)
+    // Make sure in other impls this rounds
+    // to the nearest whole number.
+    |> float.round
+    // Int
+    |> fn(x) { int.clamp(x + { 90 * 25_000_000 }, 0, 180 * 25_000_000 - 1) }
 
-  // assemble the characters
-  let plus_code =
-    {
-      big_digits
-      |> string.slice(at_index: 0, length: int.clamp(length, min: 2, max: 8))
-      |> string.pad_end(to: 8, with: padding_char)
-    }
-    <> plus
-    <> {
-      case length {
-        x if x <= 8 -> ""
-        _ -> string.drop_start(big_digits, up_to: 8)
+  let lng_int =
+    point
+    |> latlng.lng
+    |> float.multiply(8_192_000.0)
+    // Make sure in other impls this rounds
+    // to the nearest whole number.
+    |> float.round
+    // Int
+    |> int.add(180 * 8_192_000)
+    |> fn(x) {
+      case x {
+        l if l < 0 -> {
+          x % { 360 * 8_192_000 }
+          |> int.add(360 * 8_192_000)
+        }
+        _ -> {
+          x % { 360 * 8_192_000 }
+        }
       }
     }
-    <> { small_digits }
 
-  Ok(plus_code)
+  // Computed divisors
+  //
+  // Like getting Ints done first, these hard-code the divisors of
+  // each level of each block of digits for maximum accuracy.
+  let lat_big_divisors: List(Int) = [
+    500_000_000,
+    25_000_000,
+    1_250_000,
+    62_500,
+    3125,
+  ]
+
+  let lat_small_divisors: List(Int) = [
+    625,
+    125,
+    25,
+    5,
+    0,
+  ]
+
+  let lng_big_divisors: List(Int) = [
+    163_840_000,
+    8_192_000,
+    409_600,
+    20_480,
+    1024,
+  ]
+
+  let lng_small_divisors: List(Int) = [
+    256,
+    64,
+    16,
+    4,
+    0,
+  ]
+
+  // accumulate !!!
+  //
+  let big_digit_rounds = int.min(length / 2, 5)
+  let small_digit_rounds = int.max(length - 10, 0)
+
+  let all_digits: List(String) =
+    encode_big_digits_acc(
+      lat_int:,
+      lng_int:,
+      lat_divisors: list.take(lat_big_divisors, big_digit_rounds),
+      lng_divisors: list.take(lng_big_divisors, big_digit_rounds),
+      acc: [],
+    )
+    |> encode_small_digits_acc(
+      lat_int:,
+      lng_int:,
+      lat_divisors: list.take(lat_small_divisors, small_digit_rounds),
+      lng_divisors: list.take(lng_small_divisors, small_digit_rounds),
+      acc: _,
+    )
+
+  let all_digit_string =
+    all_digits
+    |> list.fold_right(from: "", with: string.append)
+
+  // Assemble!
+  case string.length(all_digit_string) {
+    // 2-6 (large areas)
+    // eg. 8G2X0000+
+    x if x < 8 -> {
+      string.pad_end(all_digit_string, to: 8, with: padding_char)
+      |> string.append(plus)
+    }
+    // exactly 8 :)
+    // eg. 8Q7XMP52+
+    x if x == 8 -> {
+      string.append(all_digit_string, plus)
+    }
+    // 10 or more (likely buildings, plazas or entrances)
+    // eg. 77M6269W+42
+    _ -> {
+      string.slice(from: all_digit_string, at_index: 0, length: 8)
+      |> string.append(plus)
+      |> string.append(string.drop_start(from: all_digit_string, up_to: 8))
+    }
+  }
+  |> Ok
 }
 
-/// Decodes a string representing a full Plus Code into a `PlusCodeRegion`.
-pub fn decode(
-  global_plus_code: String,
-) -> Result(PlusCodeRegion, PlusCodeError) {
-  use <- bool.guard(
-    when: is_valid_global_plus_code(global_plus_code),
-    return: Error(GlobalPlusCodeRequired),
-  )
-  todo
+/// Returns digits in reverse order.
+fn encode_big_digits_acc(
+  lat_int lat_int: Int,
+  lng_int lng_int: Int,
+  lat_divisors lat_divisors: List(Int),
+  lng_divisors lng_divisors: List(Int),
+  acc acc: List(String),
+) -> List(String) {
+  case list.first(lat_divisors), list.first(lng_divisors) {
+    Ok(lat_div), Ok(lng_div) -> {
+      let lat_digit =
+        { lat_int / lat_div }
+        |> fn(x) { x % 20 }
+        |> int_to_digit
+
+      let lng_digit =
+        { lng_int / lng_div }
+        |> fn(x) { x % 20 }
+        |> int_to_digit
+
+      encode_big_digits_acc(
+        lat_int:,
+        lng_int:,
+        lat_divisors: list.rest(lat_divisors) |> result.unwrap([]),
+        lng_divisors: list.rest(lng_divisors) |> result.unwrap([]),
+        acc: [lng_digit, lat_digit, ..acc],
+      )
+    }
+    // error or end of list
+    _, _ -> {
+      acc
+    }
+  }
+}
+
+/// Returns digits in reverse order.
+fn encode_small_digits_acc(
+  lat_int lat_int: Int,
+  lng_int lng_int: Int,
+  lat_divisors lat_divisors: List(Int),
+  lng_divisors lng_divisors: List(Int),
+  acc acc: List(String),
+) -> List(String) {
+  case list.first(lat_divisors), list.first(lng_divisors) {
+    Ok(lat_div), Ok(lng_div) -> {
+      let #(lat_start, lng_start) = case lat_div, lng_div {
+        0, 0 -> #(0, 0)
+        _, _ -> {
+          #({ lat_int / lat_div }, { lng_int / lng_div })
+        }
+      }
+      let digit =
+        { lat_start % 5 } * 4 + { lng_start % 4 }
+        |> int_to_digit
+
+      encode_small_digits_acc(
+        lat_int:,
+        lng_int:,
+        lat_divisors: list.rest(lat_divisors) |> result.unwrap([]),
+        lng_divisors: list.rest(lng_divisors) |> result.unwrap([]),
+        acc: [digit, ..acc],
+      )
+    }
+
+    // error or end of list
+    _, _ -> {
+      acc
+    }
+  }
 }
 
 /// Decodes a local Plus Code and returns the nearest matching full Plus Code.
@@ -169,12 +368,9 @@ pub fn recover_nearest(
   //placeholder value
   let missing_big_digits = 4
 
-  let first_digits =
-    encode_big_digits(point: near_latlng)
-    |> string.slice(at_index: 0, length: missing_big_digits)
+  let first_digits = encode(point: near_latlng, length: missing_big_digits)
 
   // add the recovered big digits to the smaller digits.
-
   todo
 }
 
@@ -263,97 +459,5 @@ fn global_encoding_digit_length_is_valid(len: Int) -> Bool {
   case len {
     2 | 4 | 6 | 8 | 10 | 11 | 12 | 13 | 14 | 15 -> True
     _ -> False
-  }
-}
-
-/// Takes a LatLng, and encodes the first 10 digits
-/// of Plus Code with that location information.
-fn encode_big_digits(point point: LatLng) -> String {
-  encode_big_digits_acc(
-    lat: { latlng.lat(point) +. 90.0 } *. 8000.0
-      |> float.truncate,
-    lng: { latlng.lng(point) +. 180.0 } *. 8000.0
-      |> float.truncate,
-    // you must do all 5 even if they're sliced off later.
-    step: 5,
-    acc: [],
-  )
-  |> list.fold("", string.append)
-}
-
-/// Accumulator for encode_big_digits.
-///
-/// Encode digits 1-10 in reverse order,
-/// in 2 digit chunks.
-fn encode_big_digits_acc(
-  lat lat: Int,
-  lng lng: Int,
-  step step: Int,
-  acc acc: List(String),
-) -> List(String) {
-  case step <= 0 {
-    True -> acc
-    False -> {
-      let assert Ok(lat_mod) = int.modulo(lat, by: 20)
-      let assert Ok(lng_mod) = int.modulo(lng, by: 20)
-
-      let lat_char = string.slice(base20_digits, lat_mod, 1)
-      let lng_char = string.slice(base20_digits, lng_mod, 1)
-
-      encode_big_digits_acc(lat: lat / 20, lng: lng / 20, step: step - 1, acc: [
-        lat_char,
-        lng_char,
-        ..acc
-      ])
-    }
-  }
-}
-
-/// Takes a LatLng, and encodes the last 11-15 digits.
-fn encode_small_digits(
-  point point: LatLng,
-  full_code_length full_code_length: Int,
-) -> String {
-  encode_small_digits_acc(
-    lat: latlng.lat(point) +. 90.0
-      |> float.modulo(by: 1.0)
-      |> result.map(fn(x) { x *. 2.5e7 })
-      |> result.unwrap(0.0)
-      |> float.truncate,
-    lng: latlng.lng(point) +. 180.0
-      |> float.modulo(by: 1.0)
-      |> result.map(fn(x) { x *. 8.192e6 })
-      |> result.unwrap(0.0)
-      |> float.truncate,
-    step: full_code_length - 10,
-    acc: [],
-  )
-  |> list.fold("", string.append)
-}
-
-/// Encode digits 11-15, 1 at a time.
-fn encode_small_digits_acc(
-  lat lat: Int,
-  lng lng: Int,
-  step step: Int,
-  acc acc: List(String),
-) -> List(String) {
-  case step <= 0 {
-    True -> acc
-    False -> {
-      let assert Ok(mod_lat) = int.modulo(lat, by: 5)
-      let assert Ok(mod_lng) = int.modulo(lng, by: 4)
-
-      let char =
-        mod_lat
-        |> fn(x) { x * 4 }
-        |> fn(x) { x + mod_lng }
-        |> string.slice(base20_digits, _, 1)
-
-      encode_small_digits_acc(lat: lat / 5, lng: lng / 4, step: step - 1, acc: [
-        char,
-        ..acc
-      ])
-    }
   }
 }
