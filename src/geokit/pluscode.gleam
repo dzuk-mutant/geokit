@@ -32,16 +32,33 @@
 /// - Global: `9C2XRVF6+2P5`
 /// - Local: `RVF6+2P5 Brighton, United Kingdom`
 ///
-/// ## Reliability
+/// ## Reliability and precision
 /// Not all Plus Code implementations are made reliably or work in
 /// every environment. This is a known problem and is due to
 /// implementation differences and complications with floating
-/// point math. This implementation has been written in a way
+/// point math.
+///
+/// This implementation has been written in a way
 /// that moves to integers as quickly as possible to maintain
-/// location integrity.
+/// location integrity. However, when asked to encode 14 or 15
+/// digit codes, there is not enough reliability in the floating
+/// point math. So while Plus Code as a spec goes up to 14 or 15
+/// digits, the encoding and decoding functions only go to 13
+/// for the following reasons:
+///
+/// - If the code isn't the same every time, there's no point
+/// in making one.
+/// - At the equator,  a 14 or 15 digit code makes a 2x5cm or a
+/// 4x14mm cell respectively. Given that Plus Codes are all about
+/// human scale, it's arguable that these are simply unececssary.
+/// If you need to direct someone to something this small, a
+/// Plus Code directing to a larger tile, plus on the ground
+/// information is going to be a lot more helpful.
+/// - 13 digits are still a size that you're unlikely to need -
+/// which refers to a tile that is 11 x 22cm at the equator.
 ///
 /// This Plus Code implementation has been tested with all of
-/// Google's reference encoding tests.
+/// Google's reference encoding tests, for lengths of up to 13.
 ///
 import geokit/latlng.{type LatLng}
 import gleam/bool
@@ -54,7 +71,10 @@ import gleam/string
 /// Errors returned by [`encode`](#encode) and [`decode`](#decode).
 pub type PlusCodeError {
   /// The digit length requested for an encode is invalid.
-  InvalidCodeLength(length: Int)
+  InvalidDigitLength(length: Int)
+  /// The digit length requested is technically valid in the spec,
+  /// but is not reliable and will not be encoded here.
+  UnreliableDigitLengthForEncode(length: Int)
   /// [`decode`](#decode) was called with an empty string.
   EmptyString
   /// An invalid character has been passed for decoding.
@@ -152,9 +172,15 @@ pub fn encode(
 
   // See if the given length is valid. If not, don't
   // even bother starting.
+  //
   use <- bool.guard(
     when: !global_encoding_digit_length_is_valid(length),
-    return: Error(InvalidCodeLength(length: length)),
+    return: Error(InvalidDigitLength(length)),
+  )
+
+  use <- bool.guard(
+    when: !global_encoding_digit_length_is_reliable_for_encode(length),
+    return: Error(UnreliableDigitLengthForEncode(length)),
   )
 
   // Plus Code conversion is very susceptible to
@@ -207,20 +233,24 @@ pub fn encode(
     3125,
   ]
 
-  let lat_small_divisors: List(Int) = [
-    625,
-    125,
-    25,
-    5,
-    0,
-  ]
-
   let lng_big_divisors: List(Int) = [
     163_840_000,
     8_192_000,
     409_600,
     20_480,
     1024,
+  ]
+
+  // Only the first 3 of each of these small divisors get used.
+  // I want to keep the implementation my friend made,
+  // but the reliability at 14 and 15 digits is too poor.
+
+  let lat_small_divisors: List(Int) = [
+    625,
+    125,
+    25,
+    5,
+    0,
   ]
 
   let lng_small_divisors: List(Int) = [
@@ -458,6 +488,16 @@ pub fn is_valid_global_plus_code(string: String) -> Bool {
 fn global_encoding_digit_length_is_valid(len: Int) -> Bool {
   case len {
     2 | 4 | 6 | 8 | 10 | 11 | 12 | 13 | 14 | 15 -> True
+    _ -> False
+  }
+}
+
+/// This module can only do 13 digits reliably.
+///
+/// For encode, you need to check this too.
+fn global_encoding_digit_length_is_reliable_for_encode(len: Int) -> Bool {
+  case len {
+    2 | 4 | 6 | 8 | 10 | 11 | 12 | 13 -> True
     _ -> False
   }
 }
