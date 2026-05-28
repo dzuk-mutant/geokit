@@ -40,25 +40,27 @@
 ///
 /// This implementation has been written in a way
 /// that moves to integers as quickly as possible to maintain
-/// location integrity. However, when asked to encode 14 or 15
-/// digit codes, there is not enough reliability in the floating
-/// point math. So while Plus Code as a spec goes up to 14 or 15
-/// digits, the encoding and decoding functions only go to 13
-/// for the following reasons:
+/// location integrity. However, even when this algorithm is
+/// asked to encode 13 - 15 digit codes, there is not enough
+/// reliability in conventional floating point math.
+/// So while Plus Code as a spec goes up to 15 digits,
+/// this module will only work with Plus Codes of up to 12
+/// digits for the following reasons:
 ///
-/// - If the code isn't the same every time, there's no point
-/// in making one.
-/// - At the equator,  a 14 or 15 digit code makes a 2x5cm or a
-/// 4x14mm cell respectively. Given that Plus Codes are all about
-/// human scale, it's arguable that these are simply unececssary.
-/// If you need to direct someone to something this small, a
-/// Plus Code directing to a larger tile, plus on the ground
-/// information is going to be a lot more helpful.
-/// - 13 digits are still a size that you're unlikely to need -
-/// which refers to a tile that is 11 x 22cm at the equator.
+/// - If the code isn't the same every time, then this module
+/// is self-defeating.
+/// - At the equator,  a 13 - 15 digit code makes cells smaller
+/// than 1m^2 (in 15 digits' case - less than 1cm^2). Given
+/// that Plus Codes are all about human scale, it's arguable
+/// that these are simply unececssary. If you need to direct
+/// someone to something this small, a Plus Code directing to
+/// a larger tile, plus on the ground information is going to
+/// be a lot more helpful.
+/// - 12 digits are still niche - it's 56 x 87 cm at the
+/// equator, and most Plus codes are 10-11 digits.
 ///
 /// This Plus Code implementation has been tested with all of
-/// Google's reference encoding tests, for lengths of up to 13.
+/// Google's reference encoding tests, for lengths of up to 12.
 ///
 import geokit/latlng.{type LatLng}
 import gleam/bool
@@ -95,10 +97,21 @@ pub type PlusCodeRegion {
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
+// ----------------- initial stuff --------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
+
+/// The marker character between characters 8 and 10.
+const separator: String = "+"
+
+const separator_position: Int = 8
+
+/// When a Plus code is shorter than 8 digits, the end must be
+/// padded with 0s to make 8 characters, so there is always a
+/// plus anchoring the code.
+const padding_char: String = "0"
 
 /// The characters used to encode lat/long information.
 const base20_digits: String = "23456789CFGHJMPQRVWX"
@@ -138,18 +151,24 @@ fn digit_to_int(digit: String) -> Result(Int, Nil) {
   }
 }
 
-/// The marker character between characters 8 and 10.
-const plus: String = "+"
+pub type LatLngInt {
+  LatLngInt(lat: Int, lng: Int)
+}
 
-/// When a Plus code is shorter than 8 digits, the end must be
-/// padded with 0s to make 8 characters, so there is always a
-/// plus anchoring the code.
-const padding_char: String = "0"
+/// Exposed for testing purposes, this should not be used
+/// directly.
+///
+/// This returns an Int variant of LatLng, crucial for the
+/// math in this module.
+pub fn location_to_integers(latlng: LatLng) -> LatLngInt {
+  todo
+}
 
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
+// -------------------- encode ------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
@@ -241,9 +260,10 @@ pub fn encode(
     1024,
   ]
 
-  // Only the first 3 of each of these small divisors get used.
-  // I want to keep the implementation my friend made,
-  // but the reliability at 14 and 15 digits is too poor.
+  // Only the first 2 of each of these small divisors get used.
+  // I want to keep this for reference to understand the scales
+  // of this algorithm, but floating point math at
+  // 13 - 15 digits is unreliable.
 
   let lat_small_divisors: List(Int) = [
     625,
@@ -292,18 +312,18 @@ pub fn encode(
     // eg. 8G2X0000+
     x if x < 8 -> {
       string.pad_end(all_digit_string, to: 8, with: padding_char)
-      |> string.append(plus)
+      |> string.append(separator)
     }
     // exactly 8 :)
     // eg. 8Q7XMP52+
     x if x == 8 -> {
-      string.append(all_digit_string, plus)
+      string.append(all_digit_string, separator)
     }
     // 10 or more (likely buildings, plazas or entrances)
     // eg. 77M6269W+42
     _ -> {
       string.slice(from: all_digit_string, at_index: 0, length: 8)
-      |> string.append(plus)
+      |> string.append(separator)
       |> string.append(string.drop_start(from: all_digit_string, up_to: 8))
     }
   }
@@ -381,6 +401,26 @@ fn encode_small_digits_acc(
   }
 }
 
+// ----------------------------------------------------
+// ----------------------------------------------------
+// ----------------------------------------------------
+// ----------------------------------------------------
+// --------------------- decode -----------------------
+// ----------------------------------------------------
+// ----------------------------------------------------
+// ----------------------------------------------------
+// ----------------------------------------------------
+
+// ----------------------------------------------------
+// ----------------------------------------------------
+// ----------------------------------------------------
+// ----------------------------------------------------
+// --------------------- recover ----------------------
+// ----------------------------------------------------
+// ----------------------------------------------------
+// ----------------------------------------------------
+// ----------------------------------------------------
+
 /// Decodes a local Plus Code and returns the nearest matching full Plus Code.
 pub fn recover_nearest(
   local_plus_code: String,
@@ -408,7 +448,8 @@ pub fn recover_nearest(
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
-// -------------- CONVERSION --------------------------
+// --------------------- convert ----------------------
+// ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
@@ -452,7 +493,8 @@ pub fn shorten_by_6(
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
-// ------------------- QUERY --------------------------
+// ---------------------- query -----------------------
+// ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
 // ----------------------------------------------------
@@ -492,12 +534,10 @@ fn global_encoding_digit_length_is_valid(len: Int) -> Bool {
   }
 }
 
-/// This module can only do 13 digits reliably.
-///
-/// For encode, you need to check this too.
+/// This module can only do 12 digits reliably.
 fn global_encoding_digit_length_is_reliable_for_encode(len: Int) -> Bool {
   case len {
-    2 | 4 | 6 | 8 | 10 | 11 | 12 | 13 -> True
+    2 | 4 | 6 | 8 | 10 | 11 | 12 -> True
     _ -> False
   }
 }
